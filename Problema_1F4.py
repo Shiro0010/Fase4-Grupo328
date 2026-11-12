@@ -1,4 +1,4 @@
-# para empezar, importamos las liberias necesarias
+# para empezar, importamos las librerias necesarias
 from abc import ABC, abstractmethod
 import datetime
 import os 
