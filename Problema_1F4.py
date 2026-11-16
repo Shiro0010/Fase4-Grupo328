@@ -201,21 +201,105 @@ class GestorClientes:
 
 
 #=========================================================================================================
-#                                     ESPACIO PARA EL MODULO 2
+#                              MODULO 2 - SERVICIOS - Por Monica Ortega
 #=========================================================================================================
-"""Espacio destinado para la jerarquía de servicios y polimorfismo."""
+"""Servicios de Software FJ: una clase abstracta (Servicio) y tres servicios que heredan de ella."""
 
-"""en este espacio puedes empezar a redactar el codigo de este modulo, cree clases abstractas
-y otras mas como base, puedes usarlas o corregirlas a tu gusto."""
 
 class Servicio(ABC):
+    """Clase abstracta: es el molde de todos los servicios.
+    No se pueden crear objetos directamente de ella, solo de sus hijas."""
+
+    IVA = 0.19  # impuesto, se usa cuando el cliente pide el costo con IVA
+
     def __init__(self, id_servicio: str, nombre: str, tarifa_base: float):
-        pass
-    
-    """Ocupamos Args y Kwargs para permitir flexibilidad en los parametros de entrada, esto es util
-    cuando se tienen diferentes tipos de servicios con diferentes atributos, asi podemos pasar los
-    parametros necesarios"""
-    
+        # El código del servicio no puede estar vacío
+        if id_servicio is None or str(id_servicio).strip() == "":
+            registrar_en_log("Se intentó crear un servicio sin código.", "ERROR")
+            raise ParametroFaltanteException("El servicio necesita un código.")
+
+        # El nombre del servicio no puede estar vacío
+        if nombre is None or str(nombre).strip() == "":
+            registrar_en_log(f"El servicio {id_servicio} no tiene nombre.", "ERROR")
+            raise ParametroFaltanteException("El servicio necesita un nombre.")
+
+        # La tarifa debe poder convertirse en número
+        try:
+            tarifa_base = float(tarifa_base)
+        except (TypeError, ValueError) as error:
+            registrar_en_log(f"La tarifa del servicio {id_servicio} no es un número.", "ERROR")
+        
+            raise ServicioNoValidoException("La tarifa base debe ser un número.") from error
+
+        # esta tarifa debe ser mayor a cero
+        if tarifa_base <= 0:
+            registrar_en_log(f"La tarifa del servicio {id_servicio} no es mayor que cero.", "ERROR")
+            raise ServicioNoValidoException("La tarifa base debe ser mayor que cero.")
+
+        self._id_servicio = str(id_servicio).strip().upper()
+        self._nombre = str(nombre).strip()
+        self._tarifa_base = tarifa_base
+        self._disponible = True 
+
+    # Propiedades: para leer los datos
+    @property
+    def id_servicio(self) -> str:
+        return self._id_servicio
+
+    @property
+    def nombre(self) -> str:
+        return self._nombre
+
+    @property
+    def tarifa_base(self) -> float:
+        return self._tarifa_base
+
+    @property
+    def disponible(self) -> bool:
+        # El módulo de reservas usa esto para saber si el servicio se puede reservar
+        return self._disponible
+
+    def cambiar_disponibilidad(self, estado: bool) -> None:
+        """Activa (True) o desactiva (False) el servicio y lo anota en el log."""
+        self._disponible = estado
+        if estado:
+            registrar_en_log(f"El servicio {self._id_servicio} quedó disponible.", "INFO")
+        else:
+            registrar_en_log(f"El servicio {self._id_servicio} quedó NO disponible.", "INFO")
+
+    def validar_parametros(self, cantidad=None, descuento=0) -> None:
+        """Revisa lo que tienen en común todos los servicios.
+        Las clases hijas la sobrescriben para agregar sus propios límites."""
+        # La cantidad es obligatoria
+        if cantidad is None:
+            registrar_en_log(f"Falta la cantidad en el servicio {self._id_servicio}.", "ERROR")
+            raise ParametroFaltanteException("Falta indicar la cantidad (horas o días).")
+
+        # La cantidad debe ser un número entero mayor que cero
+        if not isinstance(cantidad, int) or cantidad <= 0:
+            registrar_en_log(f"Cantidad inválida en {self._id_servicio}: {cantidad}", "ERROR")
+            raise ServicioNoValidoException("La cantidad debe ser un número entero mayor que cero.")
+
+        
+        if not self._disponible:
+            registrar_en_log(f"Se intentó usar el servicio {self._id_servicio}, que no está disponible.", "ERROR")
+            raise ServicioNoValidoException(f"El servicio '{self._nombre}' no está disponible.")
+
+        # El descuento es un porcentaje: entre 0 y 100
+        if descuento < 0 or descuento > 100:
+            registrar_en_log(f"Descuento inválido en {self._id_servicio}: {descuento}", "ERROR")
+            raise ServicioNoValidoException("El descuento debe estar entre 0 y 100.")
+
+    def _aplicar_descuento_e_iva(self, subtotal: float, descuento: float, con_iva: bool) -> float:
+        """Aplica al subtotal las dos variantes de cobro opcionales: descuento e IVA."""
+        valor = subtotal - (subtotal * descuento / 100)  # primero se resta el descuento
+        if con_iva:
+            valor = valor * (1 + self.IVA)               # después se suma el IVA
+        return round(valor, 2)                           # dejamos dos decimales
+
+    """Usamos *args y **kwargs en los métodos abstractos para dejar libres los parámetros;
+    cada servicio hijo define los suyos."""
+
     @abstractmethod
     def calcular_costo(self, *args, **kwargs) -> float:
         pass
@@ -226,16 +310,204 @@ class Servicio(ABC):
 
 
 class SalaReunionServicio(Servicio):
-    pass
+    """Servicio 1: reserva de salas. Se cobra por hora."""
+
+    HORAS_MAXIMAS = 12         # máximo 12 horas por reserva
+    HORAS_PARA_DESCUENTO = 4   # desde estas horas hay descuento por jornada
+    DESCUENTO_JORNADA = 10     # porcentaje de ese descuento
+
+    def __init__(self, id_servicio: str, nombre: str, tarifa_base: float, capacidad: int):
+        # La clase madre guarda y valida el código, el nombre y la tarifa
+        super().__init__(id_servicio, nombre, tarifa_base)
+
+        # La capacidad tiene que ser un entero mayor que cero
+        if not isinstance(capacidad, int) or capacidad <= 0:
+            registrar_en_log(f"Capacidad inválida en la sala {id_servicio}: {capacidad}", "ERROR")
+            raise ServicioNoValidoException("La capacidad de la sala debe ser un entero mayor que cero.")
+        self._capacidad = capacidad
+
+    def validar_parametros(self, cantidad=None, descuento=0) -> None:
+        # Primero las reglas comunes de la clase madre
+        super().validar_parametros(cantidad, descuento)
+        # Después la regla propia de las salas
+        if cantidad > self.HORAS_MAXIMAS:
+            registrar_en_log(f"Sala {self._id_servicio}: {cantidad} horas es demasiado.", "ERROR")
+            raise ServicioNoValidoException(f"Una sala se reserva máximo {self.HORAS_MAXIMAS} horas.")
+
+    def calcular_costo(self, cantidad=None, descuento=0, con_iva=False) -> float:
+        """Costo de la sala (cantidad = horas). Se puede llamar de tres formas:
+            calcular_costo(4)            -> solo las horas
+            calcular_costo(4, 10)        -> horas con 10 % de descuento
+            calcular_costo(4, 10, True)  -> horas, descuento e IVA"""
+        self.validar_parametros(cantidad, descuento)
+        subtotal = self._tarifa_base * cantidad  # tarifa por hora
+        # Regla propia de las salas: descuento por jornada larga
+        if cantidad >= self.HORAS_PARA_DESCUENTO:
+            subtotal = subtotal - (subtotal * self.DESCUENTO_JORNADA / 100)
+        return self._aplicar_descuento_e_iva(subtotal, descuento, con_iva)
+
+    def obtener_descripcion(self) -> str:
+        return (f"Sala '{self._nombre}' ({self._id_servicio}) - capacidad: {self._capacidad} personas - "
+                f"${self._tarifa_base:,.0f} por hora")
 
 
 class AlquilerEquipoServicio(Servicio):
-    pass
+    """Servicio 2: alquiler de equipos informáticos o de oficina. Se cobra por día."""
+
+    TIPOS_VALIDOS = ("informatico", "oficina")  # tipos de equipo permitidos
+    DIAS_MAXIMOS = 30                         
+    SEGURO = 5                                  # porcentaje de seguro que se suma
+
+    def __init__(self, id_servicio: str, nombre: str, tarifa_base: float, tipo_equipo: str):
+        super().__init__(id_servicio, nombre, tarifa_base)
+
+        # El tipo de equipo tiene que ser uno de los permitidos
+        tipo = str(tipo_equipo).strip().lower()
+        if tipo not in self.TIPOS_VALIDOS:
+            registrar_en_log(f"Tipo de equipo inválido en {id_servicio}: {tipo_equipo}", "ERROR")
+            raise ServicioNoValidoException("El tipo de equipo debe ser 'informatico' u 'oficina'.")
+        self._tipo_equipo = tipo
+
+    def validar_parametros(self, cantidad=None, descuento=0) -> None:
+        super().validar_parametros(cantidad, descuento)
+        if cantidad > self.DIAS_MAXIMOS:
+            registrar_en_log(f"Alquiler {self._id_servicio}: {cantidad} días es demasiado.", "ERROR")
+            raise ServicioNoValidoException(f"Un equipo se alquila máximo {self.DIAS_MAXIMOS} días.")
+
+    def calcular_costo(self, cantidad=None, descuento=0, con_iva=False) -> float:
+        """Costo del alquiler (cantidad = días). El descuento y el IVA son opcionales."""
+        self.validar_parametros(cantidad, descuento)
+        subtotal = self._tarifa_base * cantidad                 # tarifa por día x días
+        subtotal = subtotal + (subtotal * self.SEGURO / 100)    # regla propia: se suma el seguro
+        return self._aplicar_descuento_e_iva(subtotal, descuento, con_iva)
+
+    def obtener_descripcion(self) -> str:
+        return (f"Equipo {self._tipo_equipo} '{self._nombre}' ({self._id_servicio}) - "
+                f"${self._tarifa_base:,.0f} por día más {self.SEGURO} % de seguro")
 
 
 class AsesoriaEspecializadaServicio(Servicio):
-    pass
+    """Servicio 3: asesorías técnicas. Los honorarios se cobran por hora según el nivel del asesor."""
 
+    NIVELES = {"junior": 1.0, "senior": 1.5}  
+    HORAS_MAXIMAS = 8                        
+
+    def __init__(self, id_servicio: str, nombre: str, tarifa_base: float, especialidad: str, nivel: str = "junior"):
+        super().__init__(id_servicio, nombre, tarifa_base)
+
+        # La especialidad no puede estar vacía
+        if especialidad is None or str(especialidad).strip() == "":
+            registrar_en_log(f"La asesoría {id_servicio} no tiene especialidad.", "ERROR")
+            raise ParametroFaltanteException("La asesoría necesita una especialidad.")
+
+        # El nivel tiene que ser junior o senior
+        nivel_limpio = str(nivel).strip().lower()
+        if nivel_limpio not in self.NIVELES:
+            registrar_en_log(f"Nivel inválido en la asesoría {id_servicio}: {nivel}", "ERROR")
+            raise ServicioNoValidoException("El nivel del asesor debe ser 'junior' o 'senior'.")
+
+        self._especialidad = str(especialidad).strip()
+        self._nivel = nivel_limpio
+
+    def validar_parametros(self, cantidad=None, descuento=0) -> None:
+        super().validar_parametros(cantidad, descuento)
+        if cantidad > self.HORAS_MAXIMAS:
+            registrar_en_log(f"Asesoría {self._id_servicio}: {cantidad} horas es demasiado.", "ERROR")
+            raise ServicioNoValidoException(f"Una asesoría dura máximo {self.HORAS_MAXIMAS} horas.")
+
+    def calcular_costo(self, cantidad=None, descuento=0, con_iva=False) -> float:
+        """Honorarios de la asesoría (cantidad = horas). El descuento y el IVA son opcionales."""
+        self.validar_parametros(cantidad, descuento)
+        multiplicador = self.NIVELES[self._nivel]                  # junior = 1.0, senior = 1.5
+        subtotal = self._tarifa_base * cantidad * multiplicador   
+        return self._aplicar_descuento_e_iva(subtotal, descuento, con_iva)
+
+    def obtener_descripcion(self) -> str:
+        return (f"Asesoría en {self._especialidad} '{self._nombre}' ({self._id_servicio}) - "
+                f"asesor {self._nivel} - ${self._tarifa_base:,.0f} por hora base")
+
+
+# ----------------------------------------------------------
+# FUNCIONES DE APOYO DEL MODULO 2
+# ----------------------------------------------------------
+
+def calcular_costo_seguro(servicio, cantidad=None, descuento=0, con_iva=False) -> float:
+    """Calcula el costo de un servicio sin que el programa se caiga.
+    El módulo de reservas puede usarla así: calcular_costo_seguro(servicio, duracion)"""
+    try:
+        # poliformismo
+        costo = servicio.calcular_costo(cantidad, descuento, con_iva)
+    except ErrorSistemaFJ:
+    
+        raise
+    except (TypeError, ValueError, AttributeError) as error:
+        # Error inesperado de Python: lo anotamos y lo convertimos en un error del sistema
+        registrar_en_log(f"Fallo inesperado al calcular el costo: {error}", "ERROR")
+        raise ServicioNoValidoException("No se pudo calcular el costo del servicio.") from error
+    else:
+        # Esto solo corre si no hubo errores
+        registrar_en_log(f"Costo calculado para {servicio.id_servicio}: ${costo:,.2f}", "INFO")
+        return costo
+    finally:
+    
+        registrar_en_log("Fin del intento de cálculo de costo.", "INFO")
+
+
+def crear_catalogo_servicios() -> list:
+    """Crea una lista con un ejemplo de cada servicio."""
+    return [
+        SalaReunionServicio("SAL-01", "Sala Ejecutiva", 50000, 10),
+        AlquilerEquipoServicio("EQU-01", "Portatil Profesional", 40000, "informatico"),
+        AsesoriaEspecializadaServicio("ASE-01", "Ciberseguridad", 120000, "Ciberseguridad", "senior"),
+    ]
+
+
+def probar_costo(titulo, servicio, cantidad=None, descuento=0, con_iva=False) -> None:
+    """Prueba un cálculo de costo. Si falla, muestra el error y el programa sigue."""
+    try:
+        costo = calcular_costo_seguro(servicio, cantidad, descuento, con_iva)
+        print(f"  [OK] {titulo}: ${costo:,.2f}")
+    except ErrorSistemaFJ as error:
+        print(f"  [ERROR CONTROLADO] {titulo}: {error}")
+
+
+def simular_servicios() -> None:
+    """Demostración del Módulo 2 con casos correctos e incorrectos."""
+    print("\n--- SIMULACIÓN DE SERVICIOS ---")
+    sala, equipo, asesoria = crear_catalogo_servicios()
+
+    print("\nDescripciones (la misma llamada, cada servicio responde distinto):")
+    for servicio in [sala, equipo, asesoria]:
+        print(f"  - {servicio.obtener_descripcion()}")
+
+    print("\nCasos correctos:")
+    probar_costo("Sala por 5 horas", sala, 5)
+    probar_costo("Equipo por 3 días", equipo, 3)
+    probar_costo("Asesoría 2 horas con 15 % de descuento e IVA", asesoria, 2, 15, True)
+
+    print("\nCasos con error (el sistema los atrapa y sigue funcionando):")
+    try:
+        SalaReunionServicio("SAL-02", "Sala Pequena", -100, 4)
+    except ErrorSistemaFJ as error:
+        print(f"  [ERROR CONTROLADO] Crear sala con tarifa negativa: {error}")
+
+    try:
+        AlquilerEquipoServicio("EQU-02", "Cafetera", 5000, "cafetera")
+    except ErrorSistemaFJ as error:
+        print(f"  [ERROR CONTROLADO] Crear equipo de tipo cafetera: {error}")
+
+    probar_costo("Sala por 15 horas", sala, 15)
+    probar_costo("Sala sin indicar las horas", sala)
+    probar_costo("Equipo con descuento de 150 %", equipo, 2, 150)
+    probar_costo("Calcular sobre algo que no es un servicio", None, 2)
+
+    print("\nServicio no disponible:")
+    asesoria.cambiar_disponibilidad(False)
+    probar_costo("Asesoría desactivada", asesoria, 2)
+    asesoria.cambiar_disponibilidad(True)
+    probar_costo("Asesoría activada otra vez", asesoria, 2)
+
+    print("\nRevisa el archivo registro_eventos.log: ahí quedó el detalle de cada caso.")
 
 #=========================================================================================================
 #                                     ESPACIO PARA EL MODULO 3
@@ -339,7 +611,7 @@ def ejecutar_consola():
                         print(f"{i}. Nombre: {c.nombre} | Cédula: {c.cedula} | Correo: {c.correo}")
 
             elif opcion == "3":
-                print("\n[Módulo 2] Espacio reservado para servicios.")
+                simular_servicios()
 
             elif opcion == "4":
                 print("\n[Módulo 3] Espacio reservado para reservas.")
