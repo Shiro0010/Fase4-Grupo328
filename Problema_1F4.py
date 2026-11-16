@@ -509,6 +509,208 @@ def simular_servicios() -> None:
 
     print("\nRevisa el archivo registro_eventos.log: ahí quedó el detalle de cada caso.")
 
+
+class GestorServicios:
+    """Guarda en memoria la lista de servicios, igual que GestorClientes guarda los clientes.
+    El módulo de reservas puede usarlo para buscar un servicio por su código."""
+
+    def __init__(self):
+        # Lista interna de servicios
+        self._lista_servicios = []
+
+    def agregar_servicio(self, servicio: Servicio) -> None:
+        """Agrega un servicio al catálogo. No se permiten dos con el mismo código."""
+        for s in self._lista_servicios:
+            if s.id_servicio == servicio.id_servicio:
+                registrar_en_log(f"Intento de duplicado bloqueado: servicio {servicio.id_servicio}", "WARNING")
+                raise ServicioNoValidoException(f"Ya existe un servicio con el código {servicio.id_servicio}.")
+
+        self._lista_servicios.append(servicio)
+        registrar_en_log(f"Servicio {servicio.id_servicio} agregado al catálogo.", "INFO")
+
+    def buscar_servicio(self, id_servicio: str) -> Servicio:
+        """Devuelve el servicio que tenga ese código. Si no existe, lanza un error."""
+        codigo = str(id_servicio).strip().upper()  
+        for s in self._lista_servicios:
+            if s.id_servicio == codigo:
+                return s
+
+        registrar_en_log(f"Se buscó el servicio {codigo} y no existe.", "WARNING")
+        raise ServicioNoValidoException(f"No existe ningún servicio con el código {codigo}.")
+
+    @property
+    def servicios(self) -> list:
+        """Devuelve una copia de la lista (así nadie la modifica desde afuera)."""
+        return list(self._lista_servicios)
+
+
+# Gestor servicios global para que lo use todo el módulo 2 y el módulo 3
+gestor_servicios = GestorServicios()
+for _servicio in crear_catalogo_servicios():
+    gestor_servicios.agregar_servicio(_servicio)
+
+
+# ----------------------------------------------------------
+# LEER DATOS POR TECLADO
+# ----------------------------------------------------------
+
+def leer_entero(pregunta: str):
+    """Pide un número entero. Si lo dejan vacío devuelve None.
+    Si escriben letras, lanza un error del sistema (y lo anota en el log)."""
+    texto = input(pregunta).strip()
+    if texto == "":
+        return None
+    try:
+        return int(texto)
+    except ValueError as error:
+        registrar_en_log(f"Se escribió '{texto}' donde se esperaba un número entero.", "WARNING")
+        raise ServicioNoValidoException(f"'{texto}' no es un número entero válido.") from error
+
+
+def leer_decimal(pregunta: str):
+    """Pide un número (puede tener decimales). Si lo dejan vacío devuelve None."""
+    texto = input(pregunta).strip()
+    if texto == "":
+        return None
+    try:
+        return float(texto)
+    except ValueError as error:
+        registrar_en_log(f"Se escribió '{texto}' donde se esperaba un número.", "WARNING")
+        raise ServicioNoValidoException(f"'{texto}' no es un número válido.") from error
+
+
+# ----------------------------------------------------------
+# OPCIONES SUBMENU DE SERVICIOS
+# ----------------------------------------------------------
+
+def ver_catalogo() -> None:
+    """Muestra todos los servicios registrados y si están disponibles."""
+    print("\n--- CATÁLOGO DE SERVICIOS ---")
+    servicios = gestor_servicios.servicios
+    if not servicios:
+        print("No hay servicios registrados todavía.")
+        return
+
+    for i, servicio in enumerate(servicios, 1):
+        estado = "disponible" if servicio.disponible else "NO disponible"
+        print(f"{i}. {servicio.obtener_descripcion()} [{estado}]")
+
+
+def crear_servicio_interactivo() -> None:
+    """Pide los datos por teclado y crea un servicio nuevo."""
+    print("\n--- CREAR SERVICIO NUEVO ---")
+    print("1. Sala de reuniones")
+    print("2. Alquiler de equipo")
+    print("3. Asesoría especializada")
+    tipo = input("Tipo de servicio (1-3): ").strip()
+
+    if tipo not in ("1", "2", "3"):
+        registrar_en_log(f"Tipo de servicio inválido: {tipo}", "WARNING")
+        raise ServicioNoValidoException("Tipo de servicio inválido. Elige 1, 2 o 3.")
+
+    # Datos que piden los tres tipos de servicio
+    id_servicio = input("Código del servicio (ejemplo SAL-02): ")
+    nombre = input("Nombre del servicio: ")
+    tarifa = leer_decimal("Tarifa base (por hora, o por día en equipos): ")
+
+    # Datos que cambian según el tipo de servicio
+    if tipo == "1":
+        capacidad = leer_entero("Capacidad de la sala (personas): ")
+        servicio = SalaReunionServicio(id_servicio, nombre, tarifa, capacidad)
+    elif tipo == "2":
+        tipo_equipo = input("Tipo de equipo (informatico u oficina): ")
+        servicio = AlquilerEquipoServicio(id_servicio, nombre, tarifa, tipo_equipo)
+    else:
+        especialidad = input("Especialidad de la asesoría: ")
+        nivel = input("Nivel del asesor (junior o senior): ")
+        servicio = AsesoriaEspecializadaServicio(id_servicio, nombre, tarifa, especialidad, nivel)
+
+    gestor_servicios.agregar_servicio(servicio)
+    print("Servicio creado con éxito:")
+    print(f"  {servicio.obtener_descripcion()}")
+
+
+def calcular_costo_interactivo() -> None:
+    """Pide un servicio y una cantidad, y muestra cuánto cuesta."""
+    print("\n--- CALCULAR COSTO DE UN SERVICIO ---")
+    ver_catalogo()
+
+    codigo = input("\nCódigo del servicio: ")
+    servicio = gestor_servicios.buscar_servicio(codigo)  # si no existe, lanza un error
+
+    cantidad = leer_entero("Cantidad (horas o días): ")
+    descuento = leer_decimal("Descuento en % (deja vacío si no hay): ")
+    if descuento is None:
+        descuento = 0  # sin descuento
+    respuesta = input("¿Aplicar IVA del 19 %? (s/n): ").strip().lower()
+    con_iva = respuesta == "s"  # True solo si escribió "s"
+
+    costo = calcular_costo_seguro(servicio, cantidad, descuento, con_iva)
+    print(f"\n{servicio.obtener_descripcion()}")
+    print(f"Costo total: ${costo:,.2f}")
+
+
+def cambiar_disponibilidad_interactivo() -> None:
+    """Activa un servicio apagado, o apaga uno que está disponible."""
+    print("\n--- ACTIVAR O DESACTIVAR UN SERVICIO ---")
+    ver_catalogo()
+
+    codigo = input("\nCódigo del servicio: ")
+    servicio = gestor_servicios.buscar_servicio(codigo)
+
+    servicio.cambiar_disponibilidad(not servicio.disponible) 
+    if servicio.disponible:
+        print(f"El servicio {servicio.id_servicio} ahora está DISPONIBLE.")
+    else:
+        print(f"El servicio {servicio.id_servicio} ahora está NO DISPONIBLE.")
+
+
+# ----------------------------------------------------------
+# SUBMENU DE SERVICIOS (es lo que llama la opción 3 del menú principal)
+# ----------------------------------------------------------
+
+def mostrar_menu_servicios() -> None:
+    print("\n==============================================")
+    print("            MÓDULO DE SERVICIOS               ")
+    print("==============================================")
+    print("1. Ver catálogo de servicios")
+    print("2. Crear un servicio nuevo")
+    print("3. Calcular el costo de un servicio")
+    print("4. Activar o desactivar un servicio")
+    print("5. Volver al menú principal")
+    print("==============================================")
+
+
+def menu_servicios() -> None:
+    """Menú propio del módulo 2. Los errores se atrapan y el programa sigue funcionando."""
+    while True:
+        mostrar_menu_servicios()
+        opcion = input("Selecciona una opción (1-5): ").strip()
+
+        try:
+            if opcion == "1":
+                ver_catalogo()
+            elif opcion == "2":
+                crear_servicio_interactivo()
+            elif opcion == "3":
+                calcular_costo_interactivo()
+            elif opcion == "4":
+                cambiar_disponibilidad_interactivo()
+            elif opcion == "5":
+                print("\nVolviendo al menú principal...")
+                break
+            else:
+                print("Opción inválida. Por favor, elige un número del 1 al 5.")
+
+        except ErrorSistemaFJ as error:
+            # Se muestran errores del sistema y el menú sigue
+            print(f"\n[AVISO DEL SISTEMA]: {error}")
+        except Exception as error:
+            # Cualquier otro fallo imprevisto
+            registrar_en_log(f"Fallo imprevisto en el menú de servicios: {error}", "ERROR")
+            print(f"\n[ERROR INESPERADO]: Ocurrió un fallo imprevisto: {error}")
+
+
 #=========================================================================================================
 #                                     ESPACIO PARA EL MODULO 3
 #=========================================================================================================
