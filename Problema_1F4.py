@@ -540,7 +540,7 @@ def menu_servicios() -> None:
 
 
 # =========================================================================================================
-# MÓDULO 3: GESTIÓN DE RESERVAS
+# MÓDULO 3: GESTIÓN DE RESERVAS - Por Valentina Sulez Calambas
 # =========================================================================================================
 
 """esta clase representa una reserva de un servicio por parte de un cliente"""
