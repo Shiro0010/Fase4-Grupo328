@@ -4,6 +4,7 @@
 
 from abc import ABC, abstractmethod
 import datetime
+import math
 import os 
 
 # =========================================================================================================
@@ -178,13 +179,13 @@ class Servicio(ABC):
 
         try:
             tarifa_base = float(tarifa_base)
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError, OverflowError) as error:
             registrar_en_log(f"La tarifa del servicio {id_servicio} no es un número.", "ERROR")
             raise ServicioNoValidoException("La tarifa base debe ser un número.") from error
 
-        if tarifa_base <= 0:
-            registrar_en_log(f"La tarifa del servicio {id_servicio} no es mayor que cero.", "ERROR")
-            raise ServicioNoValidoException("La tarifa base debe ser mayor que cero.")
+        if not math.isfinite(tarifa_base) or tarifa_base <= 0:
+            registrar_en_log(f"La tarifa del servicio {id_servicio} no es un número finito mayor que cero.", "ERROR")
+            raise ServicioNoValidoException("La tarifa base debe ser un número finito mayor que cero.")
 
         self._id_servicio = str(id_servicio).strip().upper()
         self._nombre = str(nombre).strip()
@@ -229,9 +230,10 @@ class Servicio(ABC):
             registrar_en_log(f"Se intentó usar el servicio {self._id_servicio}, que no está disponible.", "ERROR")
             raise ServicioNoValidoException(f"El servicio '{self._nombre}' no está disponible.")
 
-        if descuento < 0 or descuento > 100:
+        if (not isinstance(descuento, (int, float)) or descuento < 0 or descuento > 100
+                or not math.isfinite(descuento)):
             registrar_en_log(f"Descuento inválido en {self._id_servicio}: {descuento}", "ERROR")
-            raise ServicioNoValidoException("El descuento debe estar entre 0 y 100.")
+            raise ServicioNoValidoException("El descuento debe ser un número finito entre 0 y 100.")
 
     def _aplicar_descuento_e_iva(self, subtotal: float, descuento: float, con_iva: bool) -> float:
         valor = subtotal - (subtotal * descuento / 100)
@@ -421,10 +423,14 @@ def leer_decimal(pregunta: str):
     if texto == "":
         return None
     try:
-        return float(texto)
+        numero = float(texto)
     except ValueError as error:
         registrar_en_log(f"Se escribió '{texto}' donde se esperaba un número.", "WARNING")
         raise ServicioNoValidoException(f"'{texto}' no es un número válido.") from error
+    if not math.isfinite(numero):
+        registrar_en_log(f"Se escribió '{texto}' donde se esperaba un número finito.", "WARNING")
+        raise ServicioNoValidoException("El número debe ser finito.")
+    return numero
 
 """esta funcion permite ver el catálogo de servicios disponibles."""
 def ver_catalogo() -> None:
@@ -534,6 +540,9 @@ def menu_servicios() -> None:
                 print("Opción inválida. Por favor, elige un número del 1 al 5.")
         except ErrorSistemaFJ as error:
             print(f"\n[AVISO DEL SISTEMA]: {error}")
+        except EOFError:
+            print("\nEntrada finalizada. Volviendo al menú principal...")
+            break
         except Exception as error:
             registrar_en_log(f"Fallo imprevisto en el menú de servicios: {error}", "ERROR")
             print(f"\n[ERROR INESPERADO]: Ocurrió un fallo imprevisto: {error}")
@@ -550,7 +559,14 @@ class Reserva:
         self.cliente = cliente
         self.codigo_servicio = codigo_servicio
         self.cantidad = cantidad
-        self.fecha = fecha
+        fecha_texto = str(fecha).strip()
+        try:
+            fecha_validada = datetime.date.fromisoformat(fecha_texto)
+        except ValueError as error:
+            raise ErrorSistemaFJ("La fecha debe tener el formato YYYY-MM-DD.") from error
+        if fecha_validada.isoformat() != fecha_texto:
+            raise ErrorSistemaFJ("La fecha debe tener el formato YYYY-MM-DD.")
+        self.fecha = fecha_validada.isoformat()
         self.estado = "Pendiente"
         self.costo_calculado = 0.0
         self.servicio_asociado = None
@@ -593,10 +609,8 @@ class Reserva:
 
     #este metodo confirma la reserva, cambiando su estado a "Confirmada" y registrando el evento en el log
     def confirmar(self) -> None:
-        if self.estado == "Cancelada":
-            raise ErrorSistemaFJ("No se puede confirmar una reserva que ya ha sido cancelada.")
-        if self.estado == "Confirmada":
-            raise ErrorSistemaFJ("La reserva ya se encuentra confirmada.")
+        if self.estado != "Pendiente":
+            raise ErrorSistemaFJ(f"No se puede confirmar una reserva en estado '{self.estado}'.")
         
         self.validar_y_preparar()
         self.estado = "Confirmada"
@@ -740,6 +754,9 @@ def menu_reservas(cliente_ejemplo) -> None:
                 
         except ErrorSistemaFJ as error:
             print(f"\n[AVISO DE RESERVA]: {error}")
+        except EOFError:
+            print("\nEntrada finalizada. Volviendo al menú principal...")
+            break
         except Exception as error:
             registrar_en_log(f"Fallo imprevisto en menú de reservas: {error}", "ERROR")
             print(f"\n[ERROR INESPERADO]: {error}")
@@ -845,10 +862,17 @@ def ejecutar_consola():
 
         except ErrorSistemaFJ as e:
             print(f"\n[AVISO DEL SISTEMA]: {e}")
+        except EOFError:
+            print("\nEntrada finalizada. Saliendo del sistema...")
+            break
         except Exception as e:
             print(f"\n[ERROR INESPERADO]: Ocurrió un fallo imprevisto: {e}")
 
 #con este bloque se inicia la ejecución del sistema si el archivo es ejecutado directamente
 if __name__ == "__main__":
     print("Iniciando entorno de ejecución para Software FJ...")
-    ejecutar_consola()
+    try:
+        ejecutar_consola()
+    except (EOFError, KeyboardInterrupt):
+        print("\nEntrada finalizada. Saliendo del sistema...")
+        
